@@ -1,0 +1,114 @@
+Resources:
+
+  MyCodeCommit:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryDescription: Testing
+      RepositoryName: catpipelinecodecommit
+  
+  MyECRRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: catpipeline
+
+  MyCodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: catpipelinebuild
+      Source: 
+        Type: CODECOMMIT
+        Location: https://git-codecommit.us-east-1.amazonaws.com/v1/repos/catpipelinecodecommit
+      Artifacts:
+        Type: NO_ARTIFACTS
+      ServiceRole: !GetAtt MyIAM.Arn
+      LogsConfig: 
+        CloudWatchLogs: 
+          GroupName: a4l-codebuild
+          Status: ENABLED
+          StreamName: catpipeline
+      Environment:
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/standard:5.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables: 
+          - Name: AWS_DEFAULT_REGION
+            Type: PARAMETER_STORE
+            Value: us-east-1
+          - Name: AWS_ACCOUNT_ID
+            Type: PARAMETER_STORE
+            Value: 450541555120
+          - Name: IMAGE_TAG
+            Type: PARAMETER_STORE
+            Value: latest
+          - Name: IMAGE_REPO_NAME
+            Type: PARAMETER_STORE
+            Value: MyECRRepo
+    DependsOn:
+      - MyCodeCommit
+      - MyIAM
+      - MyECRRepo
+
+  MyIAM:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+                - codebuild.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                    - "ecr:BatchCheckLayerAvailability"
+                    - "ecr:CompleteLayerUpload"
+                    - "ecr:GetAuthorizationToken"
+                    - "ecr:InitiateLayerUpload"
+                    - "ecr:PutImage"
+                    - "ecr:UploadLayerPart"
+                Resource: '*'
+
+  EC2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId:  # Change this
+      InstanceType: t2.micro
+      KeyName: my-key-pair
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y docker
+            service docker start
+            usermod -aG docker ec2-user
+
+#Add your build.yml file into codebuild after this runs
+#In this case 
+#version: 0.2
+
+#phases:
+#  pre_build:
+#    commands:
+#      - echo Logging in to Amazon ECR...
+#      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+#  build:
+#    commands:
+#      - echo Build started on `date`
+#      - echo Building the Docker image...
+#      - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+#      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+#  post_build:
+#    commands:
+#      - echo Build completed on `date`
+#      - echo Pushing the Docker image...
+#      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
